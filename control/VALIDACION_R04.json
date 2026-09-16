@@ -1,0 +1,11 @@
+{
+  "revision": "R04",
+  "corte_fuentes": "2026-09-16",
+  "publicacion": {"estado": "verificada", "run_id": 35161938424, "recursos_http200_sha256": 65, "html_laminas": 31, "fotografias_web": 28},
+  "matrices": {"registros_parcelarios": 1994, "uid_unicos": 1994, "izquierda": 953, "derecha": 1041, "uso_asignado": 152, "uso_sin_asignar": 1842, "area_completa_registrada_m2": 40678864.75, "comparables": 19, "equipamientos": 11, "equipamientos_coordenadas_validas": 10, "imagenes_incrustadas_recuperadas": 46},
+  "qgis": {"archivo": "K5_HACHADURA_R04.qgz", "capas_nuevas": 8, "capas_totales": 159, "capas_invalidas": 0, "poligonos_R01_vinculados": 33, "composiciones_originales_conservadas": 31, "composiciones_analiticas_A3_nuevas": 10, "version_prueba_nativa": "3.34.4-Prizren", "run_prueba_nativa": 35161972469, "renderizadas": ["R04-GENERAL", "R04-PA-01", "R04-PA-09"], "alcance_prueba_nativa": "Copia estructural con campos personales excluidos; matrices completas y GeoPackage privado validados por separado."},
+  "pruebas": {"comparacion_atributos_registro_a_registro_web_gpkg": true, "vistas_con_indicadores_concordantes": 31, "filtros_lateral_y_uso": true, "exportacion_filtrada_csv_geojson": true, "errores_javascript": 0, "movil_sin_desbordamiento": true},
+  "funciones": ["Mapa consultable", "Fotografias vinculadas por hoja y fila", "Filtros de lamina, lateral y uso", "Graficos de registros y areas por uso", "Registros por tramo de 5 km", "Distribucion por lateral", "Equipamientos por categoria", "Dispersion de valor unitario frente a PK", "Medianas por uso", "Comparacion por tipo de fuente", "Fichas y tablas buscables", "Exportacion de seleccion a CSV y GeoJSON"],
+  "limites": ["DWG conservado, pendiente de conversion y validacion", "1961 registros sin poligono vinculado conservan referencia esquematica PK, no lindero", "Area completa registrada no equivale a afectacion", "EI-010 conserva ficha y foto sin inventar longitud", "Uso faltante no inferido", "Recargar datos publicados no reprocesa Excel ni sincroniza QGIS automaticamente", "Los 31 PDF originales no se presentan como redibujados en R04"],
+  "privacidad": "Propietarios, matriculas, contactos y documentos de escritura permanecen en el paquete de trabajo; no se publican en el sitio."
+}
