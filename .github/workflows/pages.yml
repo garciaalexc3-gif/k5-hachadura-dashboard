@@ -2,6 +2,7 @@ name: Deploy GitHub Pages
 on:
   push:
     branches: [main]
+    paths: ['index.html', 'general.html', 'assets/**', 'laminas/**', 'imagenes/**']
   workflow_dispatch:
 permissions:
   contents: read
@@ -9,7 +10,7 @@ permissions:
   id-token: write
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
   deploy:
     environment:
@@ -18,65 +19,51 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validar snapshot y archivos
+        run: |
+          node --check assets/app.js
+          python - <<'PY'
+          import pathlib,json
+          p=pathlib.Path('.')
+          d=json.loads((p/'assets/datos.json').read_text())
+          assert len(d['laminas'])==31
+          assert len({r['uid'] for r in d['parcelas']})==len(d['parcelas'])
+          for image in d['imagenes']: assert (p/image['src']).is_file()
+          for sheet in d['laminas']: assert (p/'laminas'/f"{sheet['codigo']}.html").is_file()
+          print('Snapshot, IDs, fotografías y 31 vistas verificados.')
+          PY
       - uses: actions/configure-pages@v5
+      - name: Preparar únicamente el sitio público
+        run: |
+          mkdir -p _site
+          cp index.html general.html .nojekyll _site/
+          cp -R assets laminas imagenes _site/
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-      - name: Verificar URLs y archivos publicados
+      - name: Verificar disponibilidad y contenido
         env:
           SITE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
-          python3 - <<'PY'
-          import concurrent.futures
-          import hashlib
-          import os
-          import pathlib
-          import time
-          import urllib.parse
-          import urllib.request
-
-          root = pathlib.Path('.')
-          base = os.environ['SITE_URL'].rstrip('/') + '/'
-          commit = os.environ['GITHUB_SHA']
-          pages = sorted(root.glob('laminas/*.html'))
-          assert len(pages) == 31, f'Se esperaban 31 HTML; existen {len(pages)}'
-          files = [root / 'index.html', root / 'general.html', *pages,
-                   root / 'assets/app.js', root / 'assets/data.js', root / 'assets/style.css']
-
-          def verify(path):
-              relative = path.as_posix()
-              expected = hashlib.sha256(path.read_bytes()).hexdigest()
-              target = '' if relative == 'index.html' else relative
-              url = urllib.parse.urljoin(base, target)
-              last = None
-              for attempt in range(6):
-                  request = urllib.request.Request(
-                      url + '?verify=' + commit + '-' + str(attempt),
-                      headers={'Cache-Control': 'no-cache', 'User-Agent': 'K5-Deployment-Verification'})
+          python - <<'PY'
+          import concurrent.futures,hashlib,os,pathlib,time,urllib.request,json
+          p=pathlib.Path('.')
+          d=json.loads((p/'assets/datos.json').read_text())
+          files=['index.html','general.html','assets/app.js','assets/data.js','assets/datos.json','assets/style.css']+[f"laminas/{l['codigo']}.html" for l in d['laminas']]+[i['src'] for i in d['imagenes']]
+          def verify(rel):
+              want=hashlib.sha256(p.joinpath(rel).read_bytes()).digest()
+              for attempt in range(8):
                   try:
-                      with urllib.request.urlopen(request, timeout=20) as response:
-                          status = response.status
-                          body = response.read()
-                      assert status == 200, f'HTTP {status}'
-                      assert hashlib.sha256(body).hexdigest() == expected, 'Contenido no coincide con el commit'
-                      return relative
-                  except Exception as error:
-                      last = error
-                      if attempt < 5:
-                          time.sleep(4)
-              raise RuntimeError(f'{url}: {last}')
-
-          with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
-              verified = list(executor.map(verify, files))
-          for item in verified:
-              print('WEB_OK HTTP 200 SHA256', item)
-          print(f'WEB_OK TOTAL: {len(verified)} recursos; {len(pages)} laminas')
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
-              summary.write(f'## Publicacion K5 verificada\n\nURL: {base}\n\n')
-              summary.write(f'{len(verified)} recursos respondieron HTTP 200 y coinciden byte a byte con el commit.\n\n')
-              summary.write(f'Incluye el dashboard general y {len(pages)} HTML individuales.\n\n')
-              summary.write('Alcance: disponibilidad web e integridad de archivos; no es una validacion de los indicadores ni de la integracion Excel/DWG.\n')
+                      url=os.environ['SITE_URL'].rstrip('/')+'/'+rel+'?verify='+os.environ['GITHUB_SHA']+str(attempt)
+                      with urllib.request.urlopen(url,timeout=20) as r:
+                          assert r.status==200 and hashlib.sha256(r.read()).digest()==want
+                      return rel
+                  except Exception:
+                      if attempt==7: raise
+                      time.sleep(5)
+          with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex: verified=list(ex.map(verify,files))
+          print('WEB_OK',len(verified),'recursos')
           PY
