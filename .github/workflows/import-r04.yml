@@ -19,10 +19,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Recuperar paquete web público validado
+        with:
+          fetch-depth: 0
+      - name: Recuperar y validar paquete público R04
         run: |
-          curl --fail --location --retry 2 'https://at.adobe.com/7HTvaNruAbfGZZpc' --output "$RUNNER_TEMP/r04.zip"
-          echo "07af2c679fd65c603f7104e0e8c2ea30c7130f78403e19be6d8ab8037481359e  $RUNNER_TEMP/r04.zip" | sha256sum -c -
+          curl --fail --location --retry 2 'https://at.adobe.com/MCL0FqSexSYEfJOu' --output "$RUNNER_TEMP/r04.zip"
+          echo "c51636d1d3e56ac38c4a2ca81b2865cbcb39f9a43e7e24735b35033b5618da01  $RUNNER_TEMP/r04.zip" | sha256sum -c -
           python - <<'PY'
           import os,zipfile,pathlib,json
           root=pathlib.Path.cwd()
@@ -34,23 +36,30 @@ jobs:
               z.extractall(root)
           d=json.loads((root/'assets/datos.json').read_text())
           assert d['version']=='R04'
-          assert (len(d['parcelas']),len(d['comparables']),len(d['equipamientos']),len(d['laminas']),len(d['imagenes']))==(1994,19,11,31,28)
+          assert tuple(len(d[k]) for k in ('parcelas','comparables','equipamientos','laminas','imagenes'))==(1994,19,11,31,28)
           assert len({p['uid'] for p in d['parcelas']})==1994
           assert sum(p['uso']!='SIN CLASIFICAR' for p in d['parcelas'])==152
           assert abs(sum(p['area'] for p in d['parcelas'])-40678864.75)<0.01
+          missing=[]
           for family in ('parcelas','comparables','equipamientos'):
               for r in d[family]:
                   assert not {'propietario','matricula','contacto','id_abogado','parcela_abogado'}.intersection(r)
-                  assert -91<r['lon']<-88 and 12<r['lat']<15
+                  if r['lon'] is None or r['lat'] is None:
+                      missing.append(r.get('id',r.get('uid')))
+                      assert r['x'] is None and r['y'] is None
+                  else:
+                      assert -91<r['lon']<-88 and 12<r['lat']<15
+          assert missing==['EI-010'],missing
+          assert any(q['id']=='EI-010' and q['campo']=='coordenadas' for q in d['control'])
           for im in d['imagenes']: assert (root/im['src']).is_file()
-          all_ids={p['uid'] for p in d['parcelas']}
+          ids={p['uid'] for p in d['parcelas']}
           for l in d['laminas']:
               assert (root/'laminas'/f"{l['codigo']}.html").is_file()
-              assert set(l['parcelas_uid']) <= all_ids
+              assert set(l['parcelas_uid']) <= ids
               assert len(l['parcelas_uid'])==len(set(l['parcelas_uid']))
-          print('DATOS_OK: 1994 UID únicos, 31 ámbitos, 28 fotografías, áreas y privacidad.')
+          print('DATOS_OK: 1994 UID; 31 ámbitos; 28 fotos; 1 coordenada inválida preservada y documentada.')
           PY
-      - name: Verificar código y guardar la R04
+      - name: Verificar código y guardar R04
         run: |
           node --check assets/app.js
           node --check assets/data.js
@@ -58,11 +67,13 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add index.html general.html assets laminas imagenes .nojekyll
           if ! git diff --cached --quiet; then
-            git commit -m 'R04: matrices integradas, cartografía, imágenes y gráficos analíticos'
+            git commit -m 'R04 integrada: matrices, imágenes originales, cartografía y gráficos'
+            git fetch origin main
+            git rebase origin/main
             git push origin HEAD:main
           fi
       - uses: actions/configure-pages@v5
-      - name: Preparar sitio público
+      - name: Preparar solamente sitio público
         run: |
           mkdir -p _site
           cp index.html general.html .nojekyll _site/
@@ -73,7 +84,7 @@ jobs:
       - name: Publicar R04
         id: deployment
         uses: actions/deploy-pages@v4
-      - name: Comprobar publicación byte a byte
+      - name: Verificar publicación real de 65 recursos
         env:
           SITE: ${{ steps.deployment.outputs.page_url }}
         run: |
@@ -94,6 +105,7 @@ jobs:
                       if attempt==11: raise
                       time.sleep(5)
           with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex: checked=list(ex.map(verify,urls))
-          print('WEB_OK',len(checked),'recursos; 31 HTML y 28 fotografías.')
-          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:f.write('## R04 publicada y verificada\n1994 registros con UID único · 19 comparables · 11 equipamientos · 31 HTML · 28 fotografías.\n')
+          assert len(checked)==65
+          print('WEB_OK: 65 recursos, 31 HTML y 28 fotografías, HTTP 200 y SHA256 coincidente.')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:f.write('## R04 publicada y verificada\n1994 registros únicos · 19 comparables · 11 equipamientos (10 coordenadas válidas) · 31 HTML · 28 fotografías.\n65 recursos HTTP 200 y SHA256 correctos.\n')
           PY
