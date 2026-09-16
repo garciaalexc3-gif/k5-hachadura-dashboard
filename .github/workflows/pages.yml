@@ -25,3 +25,58 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Verificar URLs y archivos publicados
+        env:
+          SITE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          python3 - <<'PY'
+          import concurrent.futures
+          import hashlib
+          import os
+          import pathlib
+          import time
+          import urllib.parse
+          import urllib.request
+
+          root = pathlib.Path('.')
+          base = os.environ['SITE_URL'].rstrip('/') + '/'
+          commit = os.environ['GITHUB_SHA']
+          pages = sorted(root.glob('laminas/*.html'))
+          assert len(pages) == 31, f'Se esperaban 31 HTML; existen {len(pages)}'
+          files = [root / 'index.html', root / 'general.html', *pages,
+                   root / 'assets/app.js', root / 'assets/data.js', root / 'assets/style.css']
+
+          def verify(path):
+              relative = path.as_posix()
+              expected = hashlib.sha256(path.read_bytes()).hexdigest()
+              target = '' if relative == 'index.html' else relative
+              url = urllib.parse.urljoin(base, target)
+              last = None
+              for attempt in range(6):
+                  request = urllib.request.Request(
+                      url + '?verify=' + commit + '-' + str(attempt),
+                      headers={'Cache-Control': 'no-cache', 'User-Agent': 'K5-Deployment-Verification'})
+                  try:
+                      with urllib.request.urlopen(request, timeout=20) as response:
+                          status = response.status
+                          body = response.read()
+                      assert status == 200, f'HTTP {status}'
+                      assert hashlib.sha256(body).hexdigest() == expected, 'Contenido no coincide con el commit'
+                      return relative
+                  except Exception as error:
+                      last = error
+                      if attempt < 5:
+                          time.sleep(4)
+              raise RuntimeError(f'{url}: {last}')
+
+          with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+              verified = list(executor.map(verify, files))
+          for item in verified:
+              print('WEB_OK HTTP 200 SHA256', item)
+          print(f'WEB_OK TOTAL: {len(verified)} recursos; {len(pages)} laminas')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
+              summary.write(f'## Publicacion K5 verificada\n\nURL: {base}\n\n')
+              summary.write(f'{len(verified)} recursos respondieron HTTP 200 y coinciden byte a byte con el commit.\n\n')
+              summary.write(f'Incluye el dashboard general y {len(pages)} HTML individuales.\n\n')
+              summary.write('Alcance: disponibilidad web e integridad de archivos; no es una validacion de los indicadores ni de la integracion Excel/DWG.\n')
+          PY
