@@ -19,12 +19,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Recuperar exclusivamente el paquete web público R04
+      - name: Recuperar paquete web público validado
         run: |
-          curl --fail --location --retry 2 'https://at.adobe.com/cgAzGeHVhDk0a203' --output "$RUNNER_TEMP/r04.zip"
-          echo "55ad385608b3d9ba64b145368acd6a6b8a153d2a6d1032761206229761d54c57  $RUNNER_TEMP/r04.zip" | sha256sum -c -
+          curl --fail --location --retry 2 'https://at.adobe.com/7HTvaNruAbfGZZpc' --output "$RUNNER_TEMP/r04.zip"
+          echo "07af2c679fd65c603f7104e0e8c2ea30c7130f78403e19be6d8ab8037481359e  $RUNNER_TEMP/r04.zip" | sha256sum -c -
           python - <<'PY'
-          import os, zipfile, pathlib, json
+          import os,zipfile,pathlib,json
           root=pathlib.Path.cwd()
           with zipfile.ZipFile(os.environ['RUNNER_TEMP']+'/r04.zip') as z:
               for n in z.namelist():
@@ -38,19 +38,19 @@ jobs:
           assert len({p['uid'] for p in d['parcelas']})==1994
           assert sum(p['uso']!='SIN CLASIFICAR' for p in d['parcelas'])==152
           assert abs(sum(p['area'] for p in d['parcelas'])-40678864.75)<0.01
-          forbidden={'propietario','matricula','contacto','id_abogado','parcela_abogado'}
           for family in ('parcelas','comparables','equipamientos'):
               for r in d[family]:
-                  assert not forbidden.intersection(r)
+                  assert not {'propietario','matricula','contacto','id_abogado','parcela_abogado'}.intersection(r)
                   assert -91<r['lon']<-88 and 12<r['lat']<15
-          for im in d['imagenes']:
-              assert (root/im['src']).is_file()
+          for im in d['imagenes']: assert (root/im['src']).is_file()
+          all_ids={p['uid'] for p in d['parcelas']}
           for l in d['laminas']:
               assert (root/'laminas'/f"{l['codigo']}.html").is_file()
-              assert set(l['parcelas_uid']) <= {p['uid'] for p in d['parcelas']}
-          print('R04: fuentes, recuentos, áreas, 31 ámbitos, 28 fotografías y privacidad verificados.')
+              assert set(l['parcelas_uid']) <= all_ids
+              assert len(l['parcelas_uid'])==len(set(l['parcelas_uid']))
+          print('DATOS_OK: 1994 UID únicos, 31 ámbitos, 28 fotografías, áreas y privacidad.')
           PY
-      - name: Verificar JavaScript y guardar los archivos en el repositorio
+      - name: Verificar código y guardar la R04
         run: |
           node --check assets/app.js
           node --check assets/data.js
@@ -58,11 +58,11 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add index.html general.html assets laminas imagenes .nojekyll
           if ! git diff --cached --quiet; then
-            git commit -m 'Publicar R04 integrada: 1994 registros, 19 comparables, 11 equipamientos y 28 fotos'
+            git commit -m 'R04: matrices integradas, cartografía, imágenes y gráficos analíticos'
             git push origin HEAD:main
           fi
       - uses: actions/configure-pages@v5
-      - name: Preparar sitio sin fuentes privadas ni archivos auxiliares
+      - name: Preparar sitio público
         run: |
           mkdir -p _site
           cp index.html general.html .nojekyll _site/
@@ -70,32 +70,30 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
-      - name: Publicar R04 en GitHub Pages
+      - name: Publicar R04
         id: deployment
         uses: actions/deploy-pages@v4
-      - name: Comprobar publicación real
+      - name: Comprobar publicación byte a byte
         env:
           SITE: ${{ steps.deployment.outputs.page_url }}
         run: |
           python - <<'PY'
-          import os,urllib.request,json,time,pathlib,hashlib
+          import os,urllib.request,json,time,pathlib,hashlib,concurrent.futures
           base=os.environ['SITE'].rstrip('/')+'/'
-          for attempt in range(15):
-              try:
-                  data=urllib.request.urlopen(base+'assets/datos.json?v=R04',timeout=20).read()
-                  d=json.loads(data)
-                  assert d['version']=='R04'
-                  assert len(d['parcelas'])==1994
-                  break
-              except Exception:
-                  if attempt==14: raise
-                  time.sleep(5)
-          urls=['index.html','general.html','assets/app.js','assets/style.css','assets/datos.json']+[f"laminas/{l['codigo']}.html" for l in d['laminas']]+[i['src'] for i in d['imagenes']]
-          for rel in urls:
-              response=urllib.request.urlopen(base+rel+'?verify=R04',timeout=20)
-              assert response.status==200,rel
-              payload=response.read()
-              assert hashlib.sha256(payload).digest()==hashlib.sha256(pathlib.Path(rel).read_bytes()).digest(),rel
-          print(f'Publicación verificada: {len(urls)} recursos, incluidas 31 láminas y 28 fotografías.')
-          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:f.write('## R04 publicada y verificada\n1994 registros · 19 comparables · 11 equipamientos · 31 HTML · 28 fotografías.\n')
+          d=json.loads(pathlib.Path('assets/datos.json').read_text())
+          urls=['index.html','general.html','assets/app.js','assets/data.js','assets/style.css','assets/datos.json']+[f"laminas/{l['codigo']}.html" for l in d['laminas']]+[i['src'] for i in d['imagenes']]
+          def verify(rel):
+              expected=hashlib.sha256(pathlib.Path(rel).read_bytes()).digest()
+              for attempt in range(12):
+                  try:
+                      with urllib.request.urlopen(base+rel+'?verify=R04-'+str(attempt),timeout=20) as response:
+                          assert response.status==200
+                          assert hashlib.sha256(response.read()).digest()==expected
+                      return rel
+                  except Exception:
+                      if attempt==11: raise
+                      time.sleep(5)
+          with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex: checked=list(ex.map(verify,urls))
+          print('WEB_OK',len(checked),'recursos; 31 HTML y 28 fotografías.')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:f.write('## R04 publicada y verificada\n1994 registros con UID único · 19 comparables · 11 equipamientos · 31 HTML · 28 fotografías.\n')
           PY
