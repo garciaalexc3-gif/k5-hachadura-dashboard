@@ -1,0 +1,72 @@
+name: Validar editable QGIS R04
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/qgis-r04-qa.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Instalar QGIS solamente en el entorno de prueba
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-qgis
+      - name: Recuperar copia estructural sin Excel, DWG ni documentos personales
+        run: |
+          curl --fail --location --retry 2 'https://at.adobe.com/xHDCdKq1hAeuUzQ0' --output "$RUNNER_TEMP/qa.zip"
+          echo "94c4cb48c140995eb26888388354ae38786cf49eca53df90570972d52433f7ca  $RUNNER_TEMP/qa.zip" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/qgis-qa" "$GITHUB_WORKSPACE/resultados"
+          unzip -q "$RUNNER_TEMP/qa.zip" -d "$RUNNER_TEMP/qgis-qa"
+      - name: Abrir proyecto y renderizar láminas analíticas
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          /usr/bin/python3 - <<'PY'
+          import os,pathlib,json
+          from qgis.core import QgsApplication,QgsProject,QgsLayoutExporter,Qgis
+          QgsApplication.setPrefixPath('/usr',True)
+          app=QgsApplication([],False);app.initQgis()
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'qgis-qa'
+          out=pathlib.Path(os.environ['GITHUB_WORKSPACE'])/'resultados'
+          project=QgsProject.instance()
+          assert project.read(str(root/'K5_HACHADURA_R04.qgz'))
+          layers=list(project.mapLayers().values())
+          selected=[l for l in layers if 'K5_R04.gpkg' in l.source()]
+          assert len(selected)==8,len(selected)
+          invalid=[l.name() for l in layers if not l.isValid()]
+          assert not invalid,invalid
+          counts={l.source().split('layername=')[-1]:l.featureCount() for l in selected}
+          assert counts['parcelas_referencia_R04']==1994
+          assert counts['parcelas_poligono_R04']==33
+          assert counts['comparables_R04']==19
+          assert counts['equipamientos_R04']==11
+          assert counts['indicadores_lamina_R04']==31
+          layouts=project.layoutManager().layouts()
+          assert len(layouts)==41,len(layouts)
+          analytical=[l for l in layouts if l.name().startswith('R04-')]
+          assert len(analytical)==10,len(analytical)
+          rendered=[]
+          for l in analytical:
+              size=l.pageCollection().page(0).pageSize()
+              assert abs(size.width()-420)<.1 and abs(size.height()-297)<.1
+              if l.name().startswith(('R04-GENERAL','R04-PA-01','R04-PA-09')):
+                  settings=QgsLayoutExporter.ImageExportSettings();settings.dpi=110
+                  dest=out/(l.name().split(' ')[0]+'.png')
+                  result=QgsLayoutExporter(l).exportToImage(str(dest),settings)
+                  assert result==QgsLayoutExporter.Success,(l.name(),result)
+                  assert dest.stat().st_size>10000
+                  rendered.append(dest.name)
+          report={'qgis_version':Qgis.QGIS_VERSION,'proyecto_abierto':True,'capas':len(layers),'capas_invalidas':invalid,'capas_R04':counts,'layouts':len(layouts),'layouts_A3_nuevos':len(analytical),'png_renderizados':rendered,'alcance':'Prueba nativa de estructura y representación con campos personales excluidos. Los valores íntegros se validan por separado en el paquete privado.'}
+          (out/'QGIS_NATIVO_R04.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
+          print(json.dumps(report,ensure_ascii=False))
+          project.clear();app.exitQgis()
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QGIS-R04-validacion-nativa
+          path: resultados/
+          retention-days: 7
